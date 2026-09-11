@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { 
   TrendingUp, 
   AlertTriangle, 
@@ -12,7 +12,8 @@ import {
   FilePlus, 
   ChevronRight,
   ShieldAlert,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -28,46 +29,95 @@ import {
   AreaChart,
   Area
 } from 'recharts';
-import { StockStats, Material } from '../types.ts';
+import { StockStats, Material, Movement, Department } from '../types.ts';
 import { formatCurrency } from '../lib/pdfGenerator.ts';
+import { computeStatsFromData } from '../lib/statsHelper.ts';
 
 interface DashboardProps {
   stats: StockStats | null;
   loading: boolean;
+  materials?: Material[];
+  movements?: Movement[];
+  departments?: Department[];
   onNavigate: (tab: string) => void;
   onOpenQuickEntry: (material?: Material) => void;
   onOpenQuickExit: (material?: Material) => void;
   onOpenNewRequisition: () => void;
+  onReload?: () => void;
 }
 
 const COLORS = ['#F59E0B', '#3B82F6', '#10B981', '#EC4899', '#8B5CF6', '#06B6D4'];
 
 export const Dashboard: React.FC<DashboardProps> = ({
-  stats,
+  stats: backendStats,
   loading,
+  materials = [],
+  movements = [],
+  departments = [],
   onNavigate,
   onOpenQuickEntry,
   onOpenQuickExit,
   onOpenNewRequisition,
+  onReload,
 }) => {
-  if (loading || !stats) {
+  // Compute fallback stats if backend stats are missing or incomplete
+  const effectiveStats = useMemo(() => {
+    if (backendStats && typeof backendStats.total_materials === 'number') {
+      return backendStats;
+    }
+    if (materials.length > 0) {
+      return computeStatsFromData(materials, movements, departments);
+    }
+    return backendStats;
+  }, [backendStats, materials, movements, departments]);
+
+  if (loading && !effectiveStats) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
-        <div className="w-10 h-10 border-4 border-amber-400/30 border-t-amber-400 rounded-full animate-spin"></div>
-        <p className="text-slate-400 text-sm">Carregando indicadores em tempo real...</p>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 bg-slate-900/60 border border-slate-800/80 rounded-xl p-8">
+        <div className="w-12 h-12 border-4 border-amber-400/20 border-t-amber-400 rounded-full animate-spin"></div>
+        <div className="text-center">
+          <p className="text-slate-200 font-semibold">Carregando indicadores em tempo real...</p>
+          <p className="text-slate-400 text-xs mt-1">Calculando inventário, curvas de estoque e consumo departamental.</p>
+        </div>
       </div>
     );
   }
 
-  const criticalMaterials = stats.critical_materials || [];
-  const outOfStockItems = criticalMaterials.filter(m => m.current_stock <= 0);
-  const lowStockItems = criticalMaterials.filter(m => m.current_stock > 0 && m.current_stock <= m.min_quantity);
+  if (!effectiveStats) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center">
+        <div className="w-14 h-14 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-1">
+          <AlertTriangle className="w-7 h-7" />
+        </div>
+        <div>
+          <h3 className="text-lg font-bold text-white">Não foi possível carregar os indicadores</h3>
+          <p className="text-slate-400 text-xs max-w-md mt-1">
+            Houve uma instabilidade temporária ao consultar os dados consolidados do almoxarifado.
+          </p>
+        </div>
+        {onReload && (
+          <button
+            onClick={onReload}
+            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold transition shadow-md"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Recarregar Indicadores</span>
+          </button>
+        )}
+      </div>
+    );
+  }
 
-  const deptChartData = stats.movements_by_department.map(d => ({
-    name: d.department_code || d.department_name.substring(0, 10),
-    fullName: d.department_name,
-    valor: d.total_value,
-    quantidade: d.total_quantity,
+  const stats = effectiveStats;
+  const criticalMaterials = stats.critical_materials || [];
+  const outOfStockItems = criticalMaterials.filter(m => (Number(m.current_stock) || 0) <= 0);
+  const lowStockItems = criticalMaterials.filter(m => (Number(m.current_stock) || 0) > 0 && (Number(m.current_stock) || 0) <= (Number(m.min_quantity) || 0));
+
+  const deptChartData = (stats.movements_by_department || []).map(d => ({
+    name: d.department_code || (d.department_name ? d.department_name.substring(0, 10) : 'Setor'),
+    fullName: d.department_name || 'Setor',
+    valor: Number(d.total_value) || 0,
+    quantidade: Number(d.total_quantity) || 0,
   }));
 
   return (
@@ -336,8 +386,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </span>
           </div>
 
-          <div className="h-64 mt-4 w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="w-full h-64 min-h-[256px] min-w-0 mt-4">
+            <ResponsiveContainer width="100%" height={256}>
               <BarChart data={deptChartData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
                 <XAxis 
                   dataKey="name" 
@@ -352,7 +402,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   tickFormatter={(val) => `R$${val}`} 
                 />
                 <Tooltip 
-                  formatter={(value: any) => [formatCurrency(Number(value)), 'Valor Total']}
+                  formatter={(value: any) => [formatCurrency(Number(value) || 0), 'Valor Total']}
                   contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', color: '#f8fafc', fontSize: '12px' }}
                 />
                 <Bar dataKey="valor" radius={[4, 4, 0, 0]}>
@@ -366,7 +416,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
           {/* Department breakdown table */}
           <div className="mt-3 pt-3 border-t border-slate-800 divide-y divide-slate-800/60 text-xs">
-            {stats.movements_by_department.map((dept, i) => (
+            {(stats.movements_by_department || []).map((dept, i) => (
               <div key={dept.department_id} className="py-1.5 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }}></span>
@@ -401,9 +451,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
 
-          <div className="h-64 mt-4 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={stats.monthly_history} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
+          <div className="w-full h-64 min-h-[256px] min-w-0 mt-4">
+            <ResponsiveContainer width="100%" height={256}>
+              <AreaChart data={stats.monthly_history || []} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
                 <defs>
                   <linearGradient id="colorIn" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
@@ -417,7 +467,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} />
                 <YAxis stroke="#64748b" fontSize={11} tickLine={false} tickFormatter={(val) => `R$${val}`} />
                 <Tooltip 
-                  formatter={(value: any) => [formatCurrency(Number(value)), '']}
+                  formatter={(value: any) => [formatCurrency(Number(value) || 0), '']}
                   contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', color: '#f8fafc', fontSize: '12px' }}
                 />
                 <Area type="monotone" dataKey="entries_value" name="Entradas (R$)" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorIn)" />

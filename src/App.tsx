@@ -42,22 +42,27 @@ export function App() {
     }, 4000);
   };
 
-  // Load all system data
+  // Load all system data with resilient fallback
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [mats, depts, movs, reqs, st] = await Promise.all([
+      const [matsRes, deptsRes, movsRes, reqsRes, stRes] = await Promise.allSettled([
         api.getMaterials(),
         api.getDepartments(),
         api.getMovements(),
         api.getRequisitions(),
         api.getStats(),
       ]);
-      setMaterials(mats);
-      setDepartments(depts);
-      setMovements(movs);
-      setRequisitions(reqs);
-      setStats(st);
+
+      if (matsRes.status === 'fulfilled') setMaterials(matsRes.value);
+      if (deptsRes.status === 'fulfilled') setDepartments(deptsRes.value);
+      if (movsRes.status === 'fulfilled') setMovements(movsRes.value);
+      if (reqsRes.status === 'fulfilled') setRequisitions(reqsRes.value);
+      if (stRes.status === 'fulfilled') {
+        setStats(stRes.value);
+      } else {
+        console.warn('API /api/stats falhou, calculando indicadores a partir dos dados locais:', stRes.reason);
+      }
     } catch (err: any) {
       console.error('Erro ao carregar dados:', err);
       showToast(err.message || 'Erro ao carregar dados do estoque.', 'error');
@@ -234,10 +239,14 @@ export function App() {
           <Dashboard
             stats={stats}
             loading={loading}
+            materials={materials}
+            movements={movements}
+            departments={departments}
             onNavigate={setActiveTab}
             onOpenQuickEntry={handleOpenQuickEntry}
             onOpenQuickExit={handleOpenQuickExit}
             onOpenNewRequisition={() => setActiveTab('requisitions')}
+            onReload={loadData}
           />
         )}
 

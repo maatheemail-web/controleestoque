@@ -668,18 +668,21 @@ app.post('/api/requisitions', (req, res) => {
 app.get('/api/stats', (req, res) => {
   try {
     // Total materials & total inventory value
-    const totalMaterialsRes = db.prepare('SELECT COUNT(*) as count FROM materials').get() as any;
-    const totalMaterials = totalMaterialsRes.count;
+    const totalMaterialsRes = (db.prepare('SELECT COUNT(*) as count FROM materials').get() as any) || { count: 0 };
+    const totalMaterials = Number(totalMaterialsRes.count) || 0;
 
-    const inventoryValueRes = db.prepare('SELECT SUM(current_stock * unit_price) as total_val FROM materials').get() as any;
+    const inventoryValueRes = (db.prepare('SELECT SUM(current_stock * unit_price) as total_val FROM materials').get() as any) || { total_val: 0 };
     const totalInventoryValue = Number(inventoryValueRes.total_val) || 0;
 
     // Critical and Low stock count
-    const lowStockCount = (db.prepare('SELECT COUNT(*) as count FROM materials WHERE current_stock <= min_quantity AND current_stock > 0').get() as any).count;
-    const outOfStockCount = (db.prepare('SELECT COUNT(*) as count FROM materials WHERE current_stock <= 0').get() as any).count;
+    const lowStockRes = (db.prepare('SELECT COUNT(*) as count FROM materials WHERE current_stock <= min_quantity AND current_stock > 0').get() as any) || { count: 0 };
+    const lowStockCount = Number(lowStockRes.count) || 0;
+
+    const outOfStockRes = (db.prepare('SELECT COUNT(*) as count FROM materials WHERE current_stock <= 0').get() as any) || { count: 0 };
+    const outOfStockCount = Number(outOfStockRes.count) || 0;
 
     // Critical materials list
-    const criticalMaterials = db.prepare(`
+    const criticalMaterials = (db.prepare(`
       SELECT id, code, name, unit, min_quantity, unit_price, current_stock, category, location,
         (current_stock * unit_price) AS total_value,
         CASE
@@ -689,32 +692,31 @@ app.get('/api/stats', (req, res) => {
       FROM materials
       WHERE current_stock <= min_quantity
       ORDER BY (current_stock / CASE WHEN min_quantity = 0 THEN 1 ELSE min_quantity END) ASC, current_stock ASC
-    `).all();
+    `).all() as any[]) || [];
 
     // Movements totals
-    const entriesSummary = db.prepare(`
+    const entriesSummary = (db.prepare(`
       SELECT COUNT(*) as count, COALESCE(SUM(total_price), 0) as total_val
       FROM movements WHERE type = 'IN'
-    `).get() as any;
+    `).get() as any) || { count: 0, total_val: 0 };
 
-    const exitsSummary = db.prepare(`
+    const exitsSummary = (db.prepare(`
       SELECT COUNT(*) as count, COALESCE(SUM(total_price), 0) as total_val
       FROM movements WHERE type = 'OUT'
-    `).get() as any;
+    `).get() as any) || { count: 0, total_val: 0 };
 
     // Turnover Rate (Giro de Estoque):
-    // Formula: Total Exit Cost / Average Stock Valuation
-    // We calculate based on registered exits vs current valuation
+    // Formula: Total Exit Cost / Current Stock Valuation
     const totalExitsValue = Number(exitsSummary.total_val) || 0;
     let turnoverRate = 0;
     if (totalInventoryValue > 0) {
-      // Annualized/Periodic Turnover
-      turnoverRate = Number((totalExitsValue / totalInventoryValue).toFixed(2));
+      const calcRate = totalExitsValue / totalInventoryValue;
+      turnoverRate = Number.isFinite(calcRate) ? Number(calcRate.toFixed(2)) : 0;
     }
-    const averageHoldingDays = turnoverRate > 0 ? Math.round(365 / turnoverRate) : 0;
+    const averageHoldingDays = turnoverRate > 0 && Number.isFinite(365 / turnoverRate) ? Math.round(365 / turnoverRate) : 0;
 
     // Movements by Department
-    const deptsMovements = db.prepare(`
+    const deptsMovements = (db.prepare(`
       SELECT 
         d.id AS department_id,
         d.name AS department_name,
@@ -725,12 +727,14 @@ app.get('/api/stats', (req, res) => {
       LEFT JOIN movements m ON m.department_id = d.id AND m.type = 'OUT'
       GROUP BY d.id
       ORDER BY total_value DESC
-    `).all() as any[];
+    `).all() as any[]) || [];
 
-    const sumDeptsValue = deptsMovements.reduce((acc, cur) => acc + cur.total_value, 0) || 1;
+    const sumDeptsValue = deptsMovements.reduce((acc, cur) => acc + (Number(cur.total_value) || 0), 0) || 1;
     const movementsByDepartment = deptsMovements.map(d => ({
       ...d,
-      percentage: Number(((d.total_value / sumDeptsValue) * 100).toFixed(1)),
+      total_quantity: Number(d.total_quantity) || 0,
+      total_value: Number(d.total_value) || 0,
+      percentage: Number((((Number(d.total_value) || 0) / sumDeptsValue) * 100).toFixed(1)),
     }));
 
     // Monthly historical comparison (Entries vs Exits)
@@ -739,7 +743,7 @@ app.get('/api/stats', (req, res) => {
       { month: 'Jun/26', entries_value: 18500, exits_value: 14200, entries_qty: 450, exits_qty: 340 },
       { month: 'Jul/26', entries_value: 15300, exits_value: 11800, entries_qty: 390, exits_qty: 290 },
       { month: 'Ago/26', entries_value: 22100, exits_value: 16400, entries_qty: 510, exits_qty: 410 },
-      { month: 'Set/26', entries_value: Number(entriesSummary.total_val), exits_value: Number(exitsSummary.total_val), entries_qty: 180, exits_qty: 95 },
+      { month: 'Set/26', entries_value: Number(entriesSummary.total_val) || 0, exits_value: totalExitsValue, entries_qty: 180, exits_qty: 95 },
     ];
 
     res.json({
@@ -749,15 +753,16 @@ app.get('/api/stats', (req, res) => {
       items_out_of_stock_count: outOfStockCount,
       turnover_rate: turnoverRate,
       average_holding_days: averageHoldingDays,
-      total_entries_count: entriesSummary.count,
-      total_entries_value: Number(entriesSummary.total_val),
-      total_exits_count: exitsSummary.count,
+      total_entries_count: Number(entriesSummary.count) || 0,
+      total_entries_value: Number(entriesSummary.total_val) || 0,
+      total_exits_count: Number(exitsSummary.count) || 0,
       total_exits_value: totalExitsValue,
       movements_by_department: movementsByDepartment,
       critical_materials: criticalMaterials,
       monthly_history: monthlyHistory,
     });
   } catch (error: any) {
+    console.error('Erro ao calcular /api/stats:', error);
     res.status(500).json({ error: 'Erro ao calcular indicadores: ' + error.message });
   }
 });
