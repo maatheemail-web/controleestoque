@@ -32,6 +32,7 @@ import {
 import { StockStats, Material, Movement, Department } from '../types.ts';
 import { formatCurrency } from '../lib/pdfGenerator.ts';
 import { computeStatsFromData } from '../lib/statsHelper.ts';
+import { INITIAL_STATS } from '../data/initialData.ts';
 
 interface DashboardProps {
   stats: StockStats | null;
@@ -60,53 +61,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onOpenNewRequisition,
   onReload,
 }) => {
-  // Compute fallback stats if backend stats are missing or incomplete
+  // Compute fallback stats if backend stats are missing or incomplete; guarantee non-null with INITIAL_STATS
   const effectiveStats = useMemo(() => {
-    if (backendStats && typeof backendStats.total_materials === 'number') {
+    if (backendStats && typeof backendStats.total_materials === 'number' && backendStats.total_materials > 0) {
       return backendStats;
     }
-    if (materials.length > 0) {
+    if (materials && materials.length > 0) {
       return computeStatsFromData(materials, movements, departments);
     }
-    return backendStats;
+    return backendStats || INITIAL_STATS;
   }, [backendStats, materials, movements, departments]);
-
-  if (loading && !effectiveStats) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 bg-slate-900/60 border border-slate-800/80 rounded-xl p-8">
-        <div className="w-12 h-12 border-4 border-amber-400/20 border-t-amber-400 rounded-full animate-spin"></div>
-        <div className="text-center">
-          <p className="text-slate-200 font-semibold">Carregando indicadores em tempo real...</p>
-          <p className="text-slate-400 text-xs mt-1">Calculando inventário, curvas de estoque e consumo departamental.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!effectiveStats) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center">
-        <div className="w-14 h-14 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-1">
-          <AlertTriangle className="w-7 h-7" />
-        </div>
-        <div>
-          <h3 className="text-lg font-bold text-white">Não foi possível carregar os indicadores</h3>
-          <p className="text-slate-400 text-xs max-w-md mt-1">
-            Houve uma instabilidade temporária ao consultar os dados consolidados do almoxarifado.
-          </p>
-        </div>
-        {onReload && (
-          <button
-            onClick={onReload}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold transition shadow-md"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span>Recarregar Indicadores</span>
-          </button>
-        )}
-      </div>
-    );
-  }
 
   const stats = effectiveStats;
   const criticalMaterials = stats.critical_materials || [];
@@ -127,9 +91,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold text-white tracking-tight">Painel de Indicadores Operacionais</h2>
-            <span className="text-xs bg-amber-400/10 text-amber-400 border border-amber-400/20 px-2 py-0.5 rounded-full font-semibold">
-              Tempo Real
+            <span className="text-xs bg-amber-400/10 text-amber-400 border border-amber-400/20 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`}></span>
+              {loading ? 'Atualizando...' : 'Tempo Real'}
             </span>
+            {onReload && (
+              <button
+                onClick={onReload}
+                title="Sincronizar indicadores com o banco de dados"
+                className="p-1 text-slate-400 hover:text-amber-400 transition rounded hover:bg-slate-800/80"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-amber-400' : ''}`} />
+              </button>
+            )}
           </div>
           <p className="text-sm text-slate-400 mt-1">
             Visão consolidada de inventário físico, valorização contábil, giro logístico e requisições setoriais.

@@ -1,18 +1,31 @@
 import { Material, Department, Movement, Requisition, StockStats, User } from '../types.ts';
+import { safeStorage } from './safeStorage.ts';
 
 const API_BASE = '/api';
 
 function getAuthHeader(): Record<string, string> {
-  const token = localStorage.getItem('inventory_auth_token');
+  const token = safeStorage.getItem('inventory_auth_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Erro na requisição');
+  let data: any;
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    data = await res.json();
+  } else {
+    const text = await res.text();
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text || `HTTP ${res.status} ${res.statusText}` };
+    }
   }
-  return data;
+
+  if (!res.ok) {
+    throw new Error(data?.error || `Erro na requisição (HTTP ${res.status})`);
+  }
+  return data as T;
 }
 
 export const api = {
