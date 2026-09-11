@@ -1,0 +1,6 @@
+{
+  "name": "Controle de Estoque Pro",
+  "description": "Sistema completo de gestão operacional de estoques, controle de entradas/saídas, requisições com impressão em PDF e indicadores em tempo real.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
